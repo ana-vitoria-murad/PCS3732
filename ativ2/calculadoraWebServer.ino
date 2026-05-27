@@ -24,6 +24,7 @@ const char HTML_INTERFACE[] PROGMEM = R"rawliteral(
         button { background-color: #008CBA; color: white; border: none; cursor: pointer; font-weight: bold; }
         button:hover { background-color: #007B9A; }
         .result-box { margin-top: 20px; padding: 15px; background: #e7f3fe; border-left: 6px solid #2196F3; font-size: 18px; font-weight: bold; }
+        .overflow-box { background: #fde8e8; border-left: 6px solid #f05252; color: #a82020; }
     </style>
 </head>
 <body>
@@ -45,6 +46,7 @@ const char HTML_INTERFACE[] PROGMEM = R"rawliteral(
         
         <button onclick="enviarDados()">Calcular no ESP32</button>
         
+        <div class="result-box" id="resultado_display">Resultado: -</div>
     </div>
 
     <script>
@@ -57,8 +59,19 @@ const char HTML_INTERFACE[] PROGMEM = R"rawliteral(
                 return;
             }
             
+            let display = document.getElementById('resultado_display');
+            
             fetch(`/calcular?a=${a}&b=${b}&op=${op}`)
-                .then(response => response.text());
+                .then(response => response.text())
+                .then(resultado => {
+                    if (resultado === "OVERFLOW") {
+                        display.innerText = "⚠️ OVERFLOW!";
+                        display.className = "result-box overflow-box"; // Aplica estilo visual vermelho
+                    } else {
+                        display.innerText = "Resultado ULA: " + resultado;
+                        display.className = "result-box"; // Mantém o estilo visual azul padrão
+                    }
+                });
         }
     </script>
 </body>
@@ -83,23 +96,39 @@ void handleCalcular() {
     int inputA = server.arg("a").toInt();
     int inputB = server.arg("b").toInt();
     String op = server.arg("op");
+    
     int8_t operandoA = (int8_t)((inputA & 0x0F) << 4) >> 4;
     int8_t operandoB = (int8_t)((inputB & 0x0F) << 4) >> 4;
     
     int raw_resultado = 0;
+    int8_t b_ajustado = operandoB;
     
     if (op == "soma") {
       raw_resultado = operandoA + operandoB;
     } 
     else if (op == "subtracao") {
       raw_resultado = operandoA - operandoB;
+      b_ajustado = -operandoB;
     }
   
     int8_t resultado4bits = (int8_t)((raw_resultado & 0x0F) << 4) >> 4;
     
     atualizarLedsFisicos(resultado4bits);
     
-    server.send(200, "text/plain", String(resultado4bits));
+    bool overflow = false;
+
+    if (operandoA >= 0 && b_ajustado >= 0 && resultado4bits < 0) {
+      overflow = true;
+    }
+    else if (operandoA < 0 && b_ajustado < 0 && resultado4bits >= 0) {
+      overflow = true;
+    }
+    if (overflow) {
+      server.send(200, "text/plain", "OVERFLOW");
+    } else {
+      server.send(200, "text/plain", String(resultado4bits));
+    }
+    
   } else {
     server.send(400, "text/plain", "Parâmetros inválidos.");
   }
