@@ -1,6 +1,5 @@
 import time
 
-# Frequência nominal do Raspberry Pi 3: 1.2 GHz (1200 MHz)
 CPU_FREQ_MHZ = 1200
 
 def para_signed_4bits(valor):
