@@ -1,34 +1,45 @@
-import math
+import time
 
-def truncar_4bits(valor):
-    return valor & 0x0F
+CPU_FREQ_MHZ = 1200
 
-def obter_entrada_4bits(ordem):
+def multiply(a, b):
+    result = 0
+    abs_b = abs(b)
+    for _ in range(abs_b):
+        result += a
+    return -result if b < 0 else result
+
+def factorial(n):
+    if n <= 1:
+        return 1
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
+
+def obter_inteiro(mensagem):
     while True:
         try:
-            num = int(input(f"Digite o número {ordem} (0 a 15): "))
-            if 0 <= num <= 15:
-                return num
-            print("Erro: O número deve estar entre 0 e 15 (4 bits).")
+            return int(input(mensagem))
         except ValueError:
-            print("Por favor, digite um número inteiro válido.")
+            print("Por favor, insira um número inteiro válido.")
 
-def mostrar_resultado(operacao, res_completo):
-    res_4bits = truncar_4bits(res_completo)
-    print("\n" + "="*30)
-    print(f"Resultado da {operacao}:")
-    print(f"  Decimal (Real): {res_completo}")
-    print(f"  Decimal (4-bits): {res_4bits}")
-    print(f"  Binário (4-bits): {res_4bits:04b}")
-    if res_completo > 15:
-        print("Ocorreu Overflow!")
-    print("="*30 + "\n")
+def executar_benchmark(op_nome, func, *args):
+    start_time = time.perf_counter_ns()
+    resultado = func(*args)
+    end_time = time.perf_counter_ns()
+    
+    elapsed_ns = end_time - start_time
+    # Ciclos = (Tempo em ns * Frequência em MHz) / 1000
+    elapsed_cycles = int((elapsed_ns * CPU_FREQ_MHZ) / 1000)
+    
+    return resultado, elapsed_cycles, float(elapsed_ns)
 
 def main():
-    print("=== CALCULADORA BINÁRIA 4-BITS (Raspberry Pi 3) ===")
+    print(f"=== BENCHMARK CALCULADORA RASPBERRY PI 3 ({CPU_FREQ_MHZ} MHz) ===")
     
     while True:
-        print("Menu de Operações:")
+        print("\nMenu de Operações:")
         print("1. Soma (+)")
         print("2. Subtração (-)")
         print("3. Multiplicação (*)")
@@ -38,26 +49,38 @@ def main():
         opcao = input("Escolha uma opção (1-5): ")
         
         if opcao == '5':
-            print("Saindo")
+            print("Encerrando benchmark.")
             break
             
         if opcao in ['1', '2', '3']:
-            a = obter_entrada_4bits("A")
-            b = obter_entrada_4bits("B")
+            a = obter_inteiro("Operando A: ")
+            b = obter_inteiro("Operando B: ")
             
             if opcao == '1':
-                mostrar_resultado("Soma", a + b)
+                res, ciclos, tempo = executar_benchmark("soma", lambda x, y: x + y, a, b)
+                op_str = "soma"
             elif opcao == '2':
-                mostrar_resultado("Subtração", a - b)
+                res, ciclos, tempo = executar_benchmark("subtracao", lambda x, y: x - y, a, b)
+                op_str = "subtracao"
             elif opcao == '3':
-                mostrar_resultado("Multiplicação", a * b)
+                res, ciclos, tempo = executar_benchmark("multiplicacao", multiply, a, b)
+                op_str = "multiplicacao"
                 
         elif opcao == '4':
-            a = obter_entrada_4bits("A")
-            res_fat = math.factorial(a)
-            mostrar_resultado(f"Fatorial de {a}", res_fat)
+            a = obter_inteiro("Operando A (Fatorial): ")
+            if a < 0:
+                print("Fatorial exige número maior ou igual a 0.")
+                continue
+            res, ciclos, tempo = executar_benchmark("fatorial", factorial, a)
+            op_str = "fatorial"
         else:
-            print("Opção inválida! \n")
+            print("Opção inválida. Tente novamente.")
+            continue
+
+        # Exibição dos resultados no mesmo padrão do monitor Serial do seu ESP32
+        print(f"\nResultado ULA: {res}")
+        print(f"Operação: {op_str} | Ciclos da CPU: {ciclos} | Tempo de processamento: {tempo:.2f} ns")
+        print("-" * 50)
 
 if __name__ == "__main__":
     main()
