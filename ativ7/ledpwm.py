@@ -1,7 +1,7 @@
 from gpiozero import PWMLED
 from time import sleep
 
-LED_PIN = 18
+LED_PIN = 17
 led = PWMLED(LED_PIN)
 
 print("1 Hz")
