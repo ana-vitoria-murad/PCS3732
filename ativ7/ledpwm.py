@@ -1,24 +1,34 @@
-from gpiozero import PWMLED
+import pigpio
 from time import sleep
 
 LED_PIN = 18
-led = PWMLED(LED_PIN)
 
-print("1 Hz")
-led.frequency = 1
-led.value = 0.5
-sleep(4)
+pi = pigpio.pi()
 
-print("10 Hz")
-led.frequency = 10
-led.value = 0.5
-sleep(4)
+if not pi.connected:
+    print("Erro: Não foi possível conectar ao daemon do pigpio.")
+    exit()
 
-print("100 Hz")
-led.frequency = 100
-led.value = 0.25
-sleep(3)
-led.value = 1.0
-sleep(3)
+try:
+    print("1 Hz")
+    pi.hardware_PWM(LED_PIN, 1, 500000) 
+    sleep(4)
 
-led.off()
+    print("10 Hz")
+    pi.hardware_PWM(LED_PIN, 10, 500000) 
+    sleep(4)
+
+    print("100 Hz")
+    pi.hardware_PWM(LED_PIN, 100, 250000) 
+    sleep(3)
+    
+    pi.hardware_PWM(LED_PIN, 100, 1000000)
+    sleep(3)
+
+except KeyboardInterrupt:
+    print("\nPrograma interrompido pelo usuário.")
+
+finally:
+    print("Desligando LED")
+    pi.hardware_PWM(LED_PIN, 0, 0)
+    pi.stop()
