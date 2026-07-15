@@ -3,6 +3,7 @@ from time import sleep
 
 LED_PIN = 18
 
+# Conecta ao daemon do pigpio
 pi = pigpio.pi()
 
 if not pi.connected:
@@ -10,23 +11,21 @@ if not pi.connected:
     exit()
 
 try:
-    print("1 Hz")
-    pi.hardware_PWM(LED_PIN, 1, 500000) 
+    print("1 Hz (Pisca 1 vez por segundo)")
+    pi.hardware_PWM(LED_PIN, 1, 500000)
     sleep(4)
 
-    print("10 Hz")
-    pi.hardware_PWM(LED_PIN, 10, 500000) 
+    print("10 Hz (Pisca rápido)")
+    pi.hardware_PWM(LED_PIN, 10, 500000)
     sleep(4)
 
-    print("100 Hz")
-    pi.hardware_PWM(LED_PIN, 100, 250000) 
+    print("100 Hz (Brilho contínuo em 25%)")
+    pi.hardware_PWM(LED_PIN, 100, 250000)
     sleep(3)
     
+    print("100 Hz (Brilho máximo em 100%)")
     pi.hardware_PWM(LED_PIN, 100, 1000000)
     sleep(3)
-
-except KeyboardInterrupt:
-    print("\nPrograma interrompido pelo usuário.")
 
 finally:
     print("Desligando LED")
