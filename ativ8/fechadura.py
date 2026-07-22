@@ -1,247 +1,344 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Projeto: Fechadura Eletrônica com Raspberry Pi 3
+Componentes: Teclado Matricial 4x4, Display LCD 16x2 (I2C), Sensor Ultrassônico HC-SR04, Buzzer.
+Arquitectura: Orientada a Objetos com Máquina de Estados Não-Bloqueante.
+"""
+
 import pigpio
 import time
-import hashlib
 import sys
 
-pi = pigpio.pi()
-if not pi.connected:
-    print("[ERRO] Falha ao conectar ao daemon pigpio. Execute 'sudo pigpiod'.")
-    sys.exit()
+# =====================================================================
+# 1. CONFIGURAÇÕES E MAPEAMENTO DE PINOS (GPIOs BCM)
+# =====================================================================
+PINO_BUZZER = 12
+PINO_TRIG   = 14
+PINO_ECHO   = 15
 
-TRIG_PIN = 14 
-ECHO_PIN = 15 
-pi.set_mode(TRIG_PIN, pigpio.OUTPUT)
-pi.set_mode(ECHO_PIN, pigpio.INPUT)
-pi.write(TRIG_PIN, 0) 
+LINHAS_TECLADO  = [26, 21, 20, 16]
+COLUNAS_TECLADO = [5, 6, 13, 19]
 
-BUZZER_PIN = 12
-pi.set_mode(BUZZER_PIN, pigpio.OUTPUT)
-pi.write(BUZZER_PIN, 0) 
+I2C_BUS       = 1
+ENDERECO_LCD  = 0x27  # Mude para 0x3F se o seu módulo exigir
+LIMITE_PORTA_CM = 10.0
+SENHA_MESTRE  = "1234" # Senha de acesso
 
-LINHAS =  [26, 21, 20, 16] 
-COLUNAS = [5, 6, 13, 19] 
-MATRIZ = [
-    ['1', '4', '7', '*'],
-    ['2', '5', '8', '0'],
-    ['3', '6', '9', '#'],
-    ['A', 'B', 'C', 'D']
-]
+# =====================================================================
+# 2. CLASSES DOS COMPONENTES ISOLADOS
+# =====================================================================
 
-for col in COLUNAS:
-    pi.set_mode(col, pigpio.OUTPUT)
-    pi.write(col, 1) 
+class Buzzer:
+    def __init__(self, pi, pino):
+        self.pi = pi
+        self.pino = pino
+        self.ligado = False
+        self.tempo_inicio = 0
+        self.duracao = 0
+        self.pi.set_mode(self.pino, pigpio.OUTPUT)
+        self.pi.write(self.pino, 0)
 
-for lin in LINHAS:
-    pi.set_mode(lin, pigpio.INPUT)
-    pi.set_pull_up_down(lin, pigpio.PUD_UP)
-    pi.set_glitch_filter(lin, 50000) 
+    def acionar(self, duracao_segundos):
+        """Aciona o buzzer de forma NÃO-BLOQUEANTE."""
+        self.pi.write(self.pino, 1)
+        self.ligado = True
+        self.tempo_inicio = time.time()
+        self.duracao = duracao_segundos
 
-# Display LCD 
-I2C_BUS = 1
-ENDERECO_LCD = 0x27
+    def bipe_curto(self):
+        self.acionar(0.08)
 
-LCD_BACKLIGHT = 0x08
-LCD_ENABLE    = 0x04
-LCD_RS        = 0x01
+    def bipe_sucesso(self):
+        self.acionar(0.4)
 
-try:
-    lcd_handle = pi.i2c_open(I2C_BUS, ENDERECO_LCD)
-except Exception as e:
-    print(f"[ERRO] Falha ao iniciar barramento I2C via pigpio: {e}")
-    lcd_handle = None
+    def bipe_erro(self):
+        # Para erro, fazemos um bipe contínuo mais longo
+        self.acionar(0.8)
 
-buzzer_ligado = False
-tempo_inicio_buzzer = 0
-duracao_buzzer = 0
+    def atualizar(self):
+        """Deve ser chamado a cada iteração do loop principal."""
+        if self.ligado and (time.time() - self.tempo_inicio) >= self.duracao:
+            self.pi.write(self.pino, 0)
+            self.ligado = False
 
-tecla_anterior = None 
+    def limpar(self):
+        self.pi.write(self.pino, 0)
 
-SENHA_CORRETA_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
-buffer_senha = ""
-falhas_consecutivas = 0
-LIMITE_PORTA_FECHADA_CM = 10.0 
-sistema_destravado = False 
 
-def lcd_toggle_enable(bits):
-    """Gera o pulso de Enable para o LCD"""
-    if lcd_handle is None: return
-    pi.i2c_write_byte(lcd_handle, (bits | LCD_ENABLE))
-    time.sleep(0.0005)
-    pi.i2c_write_byte(lcd_handle, (bits & ~LCD_ENABLE))
-    time.sleep(0.0001)
+class DisplayLCD:
+    LCD_BACKLIGHT = 0x08
+    LCD_ENABLE    = 0x04
+    LCD_RS        = 0x01
 
-def lcd_byte(bits, modo):
-    """Envia byte dividindo em 2 nibbles de 4 bits"""
-    if lcd_handle is None: return
-    bits_high = modo | (bits & 0xF0) | LCD_BACKLIGHT
-    bits_low  = modo | ((bits << 4) & 0xF0) | LCD_BACKLIGHT
+    def __init__(self, pi, bus, endereco):
+        self.pi = pi
+        self.handle = self.pi.i2c_open(bus, endereco)
+        self._inicializar()
 
-    pi.i2c_write_byte(lcd_handle, bits_high)
-    lcd_toggle_enable(bits_high)
-    pi.i2c_write_byte(lcd_handle, bits_low)
-    lcd_toggle_enable(bits_low)
+    def _toggle_enable(self, bits):
+        self.pi.i2c_write_byte(self.handle, (bits | self.LCD_ENABLE))
+        time.sleep(0.0005)
+        self.pi.i2c_write_byte(self.handle, (bits & ~self.LCD_ENABLE))
+        time.sleep(0.0001)
 
-def lcd_init():
-    """Inicialização física do LCD modo 4 bits"""
-    if lcd_handle is None: return
-    time.sleep(0.05)
-    lcd_byte(0x33, 0)
-    lcd_byte(0x32, 0)
-    lcd_byte(0x06, 0)
-    lcd_byte(0x0C, 0)
-    lcd_byte(0x28, 0)
-    lcd_byte(0x01, 0) 
-    time.sleep(0.005)
+    def _enviar_byte(self, bits, modo):
+        bits_high = modo | (bits & 0xF0) | self.LCD_BACKLIGHT
+        bits_low  = modo | ((bits << 4) & 0xF0) | self.LCD_BACKLIGHT
+        self.pi.i2c_write_byte(self.handle, bits_high)
+        self._toggle_enable(bits_high)
+        self.pi.i2c_write_byte(self.handle, bits_low)
+        self._toggle_enable(bits_low)
 
-def atualizar_lcd(linha1, linha2=""):
-    """Escreve a mensagem no terminal e envia para o LCD físico"""
-    print(f"[LCD] L1: {linha1} | L2: {linha2}")
-    if lcd_handle is None: return
+    def _inicializar(self):
+        time.sleep(0.05)
+        for cmd in [0x33, 0x32, 0x06, 0x0C, 0x28, 0x01]:
+            self._enviar_byte(cmd, 0)
+        time.sleep(0.005)
 
-    lcd_byte(0x80, 0)
-    msg1 = linha1.ljust(16)[:16]
-    for char in msg1:
-        lcd_byte(ord(char), LCD_RS)
+    def exibir(self, linha1, linha2=""):
+        """Atualiza as duas linhas do display instantaneamente."""
+        # Linha 1
+        self._enviar_byte(0x80, 0)
+        for char in linha1.ljust(16)[:16]:
+            self._enviar_byte(ord(char), self.LCD_RS)
+        # Linha 2
+        self._enviar_byte(0xC0, 0)
+        for char in linha2.ljust(16)[:16]:
+            self._enviar_byte(ord(char), self.LCD_RS)
 
-    lcd_byte(0xC0, 0)
-    msg2 = linha2.ljust(16)[:16]
-    for char in msg2:
-        lcd_byte(ord(char), LCD_RS)
+    def limpar(self):
+        self._enviar_byte(0x01, 0)
+        time.sleep(0.002)
 
-def ler_distancia():
-    """Mede a distância com o sensor ultrassônico"""
-    pi.write(TRIG_PIN, 1)
-    time.sleep(0.00001)
-    pi.write(TRIG_PIN, 0)
-    
-    inicio_pulso = time.perf_counter()
-    fim_pulso = time.perf_counter()
-    timeout_inicio = time.perf_counter()
-    
-    while pi.read(ECHO_PIN) == 0:
+    def fechar(self):
+        try:
+            self.limpar()
+            self.pi.i2c_write_byte(self.handle, 0x00)
+            self.pi.i2c_close(self.handle)
+        except Exception:
+            pass
+
+
+class SensorUltrassonico:
+    def __init__(self, pi, pino_trig, pino_echo, limite_cm):
+        self.pi = pi
+        self.trig = pino_trig
+        self.echo = pino_echo
+        self.limite_cm = limite_cm
+        self.pi.set_mode(self.trig, pigpio.OUTPUT)
+        self.pi.set_mode(self.echo, pigpio.INPUT)
+        self.pi.write(self.trig, 0)
+
+    def ler_distancia(self):
+        """Realiza leitura com timeout de segurança para não travar o loop."""
+        self.pi.write(self.trig, 1)
+        time.sleep(0.00001)
+        self.pi.write(self.trig, 0)
+
         inicio_pulso = time.perf_counter()
-        if inicio_pulso - timeout_inicio > 0.02: 
-            return -1.0
-            
-    while pi.read(ECHO_PIN) == 1:
         fim_pulso = time.perf_counter()
-        if fim_pulso - inicio_pulso > 0.02:
-            return -1.0
-            
-    duracao = fim_pulso - inicio_pulso
-    distancia_cm = (duracao * 34300) / 2
-    return round(distancia_cm, 2)
+        timeout = time.perf_counter()
 
-def acionar_buzzer(duracao_segundos):
-    global buzzer_ligado, tempo_inicio_buzzer, duracao_buzzer
-    pi.write(BUZZER_PIN, 1)
-    buzzer_ligado = True
-    tempo_inicio_buzzer = time.time()
-    duracao_buzzer = duracao_segundos
+        while self.pi.read(self.echo) == 0:
+            inicio_pulso = time.perf_counter()
+            if inicio_pulso - timeout > 0.015:  # Timeout de 15ms
+                return -1.0
 
-def atualizar_buzzer():
-    global buzzer_ligado
-    if buzzer_ligado and (time.time() - tempo_inicio_buzzer) >= duracao_buzzer:
-        pi.write(BUZZER_PIN, 0)
-        buzzer_ligado = False
+        while self.pi.read(self.echo) == 1:
+            fim_pulso = time.perf_counter()
+            if fim_pulso - inicio_pulso > 0.015:
+                return -1.0
 
-def ler_teclado():
-    global tecla_anterior
-    tecla_atual = None
-    
-    for j in range(4):
-        pi.write(COLUNAS[j], 0) 
-        for i in range(4):
-            if pi.read(LINHAS[i]) == 0: 
-                tecla_atual = MATRIZ[i][j]
-        pi.write(COLUNAS[j], 1) 
+        distancia = ((fim_pulso - inicio_pulso) * 34300) / 2
+        return round(distancia, 2)
+
+    def porta_fechada(self):
+        dist = self.ler_distancia()
+        if dist < 0:
+            return None  # Erro de leitura/timeout
+        return dist <= self.limite_cm
+
+
+class TecladoMatricial:
+    MATRIZ = [
+        ['1', '4', '7', '*'],
+        ['2', '5', '8', '0'],
+        ['3', '6', '9', '#'],
+        ['A', 'B', 'C', 'D']
+    ]
+
+    def __init__(self, pi, linhas, colunas):
+        self.pi = pi
+        self.linhas = linhas
+        self.colunas = colunas
+        self.tecla_anterior = None
+
+        for col in self.colunas:
+            self.pi.set_mode(col, pigpio.OUTPUT)
+            self.pi.write(col, 1)
+
+        for lin in self.linhas:
+            self.pi.set_mode(lin, pigpio.INPUT)
+            self.pi.set_pull_up_down(lin, pigpio.PUD_UP)
+            self.pi.set_glitch_filter(lin, 50000) # Filtro de rebote via hardware
+
+    def ler_tecla(self):
+        tecla_atual = None
+        for j in range(4):
+            self.pi.write(self.colunas[j], 0)
+            for i in range(4):
+                if self.pi.read(self.linhas[i]) == 0:
+                    tecla_atual = self.MATRIZ[i][j]
+            self.pi.write(self.colunas[j], 1)
+            if tecla_atual:
+                break
+
+        if tecla_atual != self.tecla_anterior:
+            self.tecla_anterior = tecla_atual
+            return tecla_atual
+        return None
+
+    def limpar(self):
+        for col in self.colunas:
+            self.pi.write(col, 1)
+
+
+# =====================================================================
+# 3. CONTROLADOR PRINCIPAL (MÁQUINA DE ESTADOS)
+# =====================================================================
+
+class FechaduraEletronica:
+    def __init__(self, pi):
+        self.pi = pi
+        self.buzzer = Buzzer(pi, PINO_BUZZER)
+        self.lcd = DisplayLCD(pi, I2C_BUS, ENDERECO_LCD)
+        self.sensor = SensorUltrassonico(pi, PINO_TRIG, PINO_ECHO, LIMITE_PORTA_CM)
+        self.teclado = TecladoMatricial(pi, LINHAS_TECLADO, COLUNAS_TECLADO)
+
+        # Estados: 'TRAVADO', 'DESTRAVADO', 'ERRO'
+        self.estado = 'TRAVADO'
+        self.buffer_senha = ""
         
-        if tecla_atual:
-            break 
-            
-    if tecla_atual != tecla_anterior:
-        tecla_anterior = tecla_atual
-        return tecla_atual
-    
-    return None
+        # Variáveis de temporização não-bloqueante
+        self.tempo_mudanca_estado = time.time()
+        self.tempo_ultima_leitura_sensor = 0
+        self.status_porta = "FECHADA"
 
-def processar_senha(senha_digitada):
-    global falhas_consecutivas, sistema_destravado
-    hash_digitado = hashlib.sha256(senha_digitada.encode()).hexdigest()
-    
-    if hash_digitado == SENHA_CORRETA_HASH:
-        acionar_buzzer(0.2) 
-        atualizar_lcd("Aberto", "Acesso Permitido")
-        falhas_consecutivas = 0
-        sistema_destravado = True 
-        print("[SISTEMA] Tranca destravada.")
-    else:
-        acionar_buzzer(1.0) 
-        falhas_consecutivas += 1
-        atualizar_lcd("Acesso Negado", f"Falhas: {falhas_consecutivas}")
-        print(f"[SISTEMA] Falha de autenticacao. Tentativa nº {falhas_consecutivas}")
+        self.atualizar_interface()
 
-def main():
-    global buffer_senha, sistema_destravado
-    
-    lcd_init()
-    atualizar_lcd("STATUS: OK", "Aguardando...")
-    
-    distancia_anterior = 0.0 
-    
-    try:
-        while True:
-            atualizar_buzzer()
-            
-            distancia = ler_distancia()
+    def mudar_estado(self, novo_estado):
+        print(f"[MEF] Mudança de Estado: {self.estado} -> {novo_estado}")
+        self.estado = novo_estado
+        self.tempo_mudanca_estado = time.time()
+        self.buffer_senha = ""
+        self.atualizar_interface()
 
-            print(distancia)
+    def atualizar_interface(self):
+        """Atualiza o LCD de acordo com o estado atual."""
+        if self.estado == 'TRAVADO':
+            mascara_senha = "*" * len(self.buffer_senha)
+            self.lcd.exibir(f"PORTA: {self.status_porta}", f"Senha: {mascara_senha}")
+        elif self.estado == 'DESTRAVADO':
+            self.lcd.exibir("ACESSO PERMITIDO", f"Porta: {self.status_porta}")
+        elif self.estado == 'ERRO':
+            self.lcd.exibir("SENHA INCORRETA!", "Tente novamente.")
+
+    def gerenciar_teclado(self):
+        tecla = self.teclado.ler_tecla()
+        if not tecla:
+            return
+
+        self.buzzer.bipe_curto()
+        print(f"[TECLADO] Tecla: {tecla}")
+
+        if self.estado == 'TRAVADO':
+            if tecla == '*':
+                # ' * ' limpa o buffer digitado
+                self.buffer_senha = ""
+                self.atualizar_interface()
+            elif tecla == '#':
+                # ' # ' avalia a senha digitada
+                if self.buffer_senha == SENHA_MESTRE:
+                    self.buzzer.bipe_sucesso()
+                    self.mudar_estado('DESTRAVADO')
+                else:
+                    self.buzzer.bipe_erro()
+                    self.mudar_estado('ERRO')
+            else:
+                # Acumula até 4 dígitos
+                if len(self.buffer_senha) < 4:
+                    self.buffer_senha += str(tecla)
+                    self.atualizar_interface()
+        
+        elif self.estado == 'DESTRAVADO':
+            # Se apertar '#' com a porta aberta/destravada, tranca manualmente
+            if tecla == '#':
+                self.mudar_estado('TRAVADO')
+
+    def gerenciar_sensor(self):
+        """Lê o sensor ultrassônico apenas a cada 500ms para poupar CPU."""
+        if (time.time() - self.tempo_ultima_leitura_sensor) >= 0.5:
+            self.tempo_ultima_leitura_sensor = time.time()
+            fechada = self.sensor.porta_fechada()
             
-            if distancia > 0:
-                if abs(distancia - distancia_anterior) >= 30.0:
-                    print(f"[SENSOR] Distancia medida: {distancia} cm")
-                    distancia_anterior = distancia
+            if fechada is not None:
+                novo_status = "FECHADA" if fechada else "ABERTA"
+                if novo_status != self.status_porta:
+                    print(f"[SENSOR] Status da Porta mudou para: {novo_status}")
+                    self.status_porta = novo_status
+                    # Atualiza o display se estiver no modo normal
+                    if self.estado in ['TRAVADO', 'DESTRAVADO']:
+                        self.atualizar_interface()
+
+    def gerenciar_temporizadores(self):
+        """Controla o retorno automático de estados temporários."""
+        tempo_decorrido = time.time() - self.tempo_mudanca_estado
+
+        # Sai do estado de ERRO após 2 segundos
+        if self.estado == 'ERRO' and tempo_decorrido >= 2.0:
+            self.mudar_estado('TRAVADO')
+
+        # Trava automaticamente após 6 segundos destravada (se a porta estiver fechada)
+        elif self.estado == 'DESTRAVADO' and tempo_decorrido >= 6.0:
+            if self.status_porta == "FECHADA":
+                print("[SISTEMA] Trancamento automático por tempo.")
+                self.buzzer.bipe_curto()
+                self.mudar_estado('TRAVADO')
+
+    def rodar(self):
+        print("[SISTEMA] Fechadura Eletrônica Iniciada. Aguardando comandos...")
+        try:
+            while True:
+                # O laço roda em altíssima frequência, sem nenhum sleep() bloqueante
+                self.buzzer.atualizar()
+                self.gerenciar_teclado()
+                self.gerenciar_sensor()
+                self.gerenciar_temporizadores()
+                time.sleep(0.01) # Pequena pausa de 10ms apenas para não esgotar 100% da CPU
                 
-                if distancia > LIMITE_PORTA_FECHADA_CM and not sistema_destravado:
-                    atualizar_lcd("ALARME!", "Invasao detectada")
-                    acionar_buzzer(2.0)
-                
-                elif distancia <= LIMITE_PORTA_FECHADA_CM and sistema_destravado:
-                    sistema_destravado = False
-                    atualizar_lcd("STATUS: OK", "Porta Trancada")
-                    print("[SISTEMA] Porta foi fechada. Sistema rearmado.")
-            
-            tecla = ler_teclado()
-            
-            if tecla:
-                if tecla == '#': 
-                    if len(buffer_senha) > 0:
-                        processar_senha(buffer_senha)
-                        buffer_senha = "" 
-                        time.sleep(1.5) 
-                        if not sistema_destravado:
-                            atualizar_lcd("STATUS: OK", "Aguardando...")
-                
-                elif tecla == '*': 
-                    buffer_senha = ""
-                    atualizar_lcd("Entrada limpa", "Aguardando...")
-                    
-                else: 
-                    buffer_senha += tecla
-                    atualizar_lcd("Senha:", "*" * len(buffer_senha))
-            
-            time.sleep(0.01)
+        except KeyboardInterrupt:
+            print("\n[SISTEMA] Desligando fechadura...")
+        finally:
+            self.buzzer.limpar()
+            self.lcd.fechar()
+            self.teclado.limpar()
+            self.pi.stop()
+            print("[SISTEMA] Conexões GPIO e I2C encerradas com segurança.")
 
-    except KeyboardInterrupt:
-        print("\n[SISTEMA] Encerrando fechadura eletrônica...")
-    finally:
-        pi.write(BUZZER_PIN, 0)
-        pi.write(TRIG_PIN, 0)
-        if lcd_handle is not None:
-            lcd_byte(0x01, 0) 
-            pi.i2c_write_byte(lcd_handle, 0x00) 
-            pi.i2c_close(lcd_handle)
-        pi.stop()
-
+# =====================================================================
+# 4. EXECUÇÃO PRINCIPAL
+# =====================================================================
 if __name__ == '__main__':
-    main()
+    pi = pigpio.pi()
+    if not pi.connected:
+        print("[ERRO FATAL] Falha ao conectar ao daemon pigpio.")
+        print("Execute no terminal: sudo pigpiod")
+        sys.exit(1)
+
+    try:
+        fechadura = FechaduraEletronica(pi)
+        fechadura.rodar()
+    except Exception as e:
+        print(f"[ERRO INESPERADO] {e}")
+        pi.stop()
