@@ -187,12 +187,21 @@ def main():
     lcd_init()
     atualizar_lcd("STATUS: OK", "Aguardando...")
     
+    distancia_anterior = 0.0 
+    
     try:
         while True:
             atualizar_buzzer()
             
             distancia = ler_distancia()
+
+            print(distancia)
+            
             if distancia > 0:
+                if abs(distancia - distancia_anterior) >= 1.0:
+                    print(f"[SENSOR] Distancia medida: {distancia} cm")
+                    distancia_anterior = distancia
+                
                 if distancia > LIMITE_PORTA_FECHADA_CM and not sistema_destravado:
                     atualizar_lcd("ALARME!", "Invasao detectada")
                     acionar_buzzer(2.0)
