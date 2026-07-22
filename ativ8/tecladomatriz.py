@@ -6,9 +6,9 @@ pi = pigpio.pi()
 if not pi.connected:
     print("[ERRO] Falha ao conectar ao daemon pigpio. Execute 'sudo pigpiod'.")
     sys.exit()
-[16, 20, 21, 26]
-LINHAS =  [16, 20, 21, 26] # checar os pinos
-COLUNAS = [19, 13, 6, 5] # checar os pinos
+
+LINHAS =  [26, 21, 20, 16] # [16, 20, 21, 26] # checar os pinos
+COLUNAS = [5, 6, 13, 19] # [19, 13, 6, 5] # checar os pinos
 MATRIZ = [
     ['1','2','3','A'],
     ['4','5','6','B'],
