@@ -191,7 +191,7 @@ if __name__ == '__main__':
             if distancia > 0 and distancia > LIMITE_DISTANCIA_CM:
                 if not estado_bloqueado:
                     estado_bloqueado = True
-                    acionar_buzzer(3)  
+                    acionar_buzzer(0.1)  
                     exibir_mensagem("SISTEMA", linha=1)
                     exibir_mensagem("BLOQUEADO", linha=2)
                 time.sleep(0.1)
@@ -212,11 +212,11 @@ if __name__ == '__main__':
                 if len(senha_digitada) == len(SENHA_CORRETA):
                     if senha_digitada == SENHA_CORRETA:
                         exibir_mensagem("Acesso Permitido", linha=1) 
-                        acionar_buzzer(1) 
+                        acionar_buzzer(0.2) 
                         acionar_led(3)    
                     else:
                         exibir_mensagem("Acesso Negado", linha=1) #
-                        acionar_buzzer(2) 
+                        acionar_buzzer(0.4) 
                     
                     tempo_reset_display = time.time() + 3.0
 
