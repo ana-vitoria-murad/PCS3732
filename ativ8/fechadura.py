@@ -56,11 +56,11 @@ duracao_buzzer = 0
 
 tecla_anterior = None 
 
-# Hash SHA-256 da senha "1234"
 SENHA_CORRETA_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
 buffer_senha = ""
 falhas_consecutivas = 0
 LIMITE_PORTA_FECHADA_CM = 10.0 
+sistema_destravado = False 
 
 def lcd_toggle_enable(bits):
     """Gera o pulso de Enable para o LCD"""
@@ -166,13 +166,14 @@ def ler_teclado():
     return None
 
 def processar_senha(senha_digitada):
-    global falhas_consecutivas
+    global falhas_consecutivas, sistema_destravado
     hash_digitado = hashlib.sha256(senha_digitada.encode()).hexdigest()
     
     if hash_digitado == SENHA_CORRETA_HASH:
         acionar_buzzer(0.2) 
         atualizar_lcd("Aberto", "Acesso Permitido")
         falhas_consecutivas = 0
+        sistema_destravado = True 
         print("[SISTEMA] Tranca destravada.")
     else:
         acionar_buzzer(1.0) 
@@ -181,7 +182,7 @@ def processar_senha(senha_digitada):
         print(f"[SISTEMA] Falha de autenticacao. Tentativa nº {falhas_consecutivas}")
 
 def main():
-    global buffer_senha
+    global buffer_senha, sistema_destravado
     
     lcd_init()
     atualizar_lcd("STATUS: OK", "Aguardando...")
@@ -195,6 +196,11 @@ def main():
                 if distancia > LIMITE_PORTA_FECHADA_CM and not sistema_destravado:
                     atualizar_lcd("ALARME!", "Invasao detectada")
                     acionar_buzzer(2.0)
+                
+                elif distancia <= LIMITE_PORTA_FECHADA_CM and sistema_destravado:
+                    sistema_destravado = False
+                    atualizar_lcd("STATUS: OK", "Porta Trancada")
+                    print("[SISTEMA] Porta foi fechada. Sistema rearmado.")
             
             tecla = ler_teclado()
             
@@ -204,7 +210,8 @@ def main():
                         processar_senha(buffer_senha)
                         buffer_senha = "" 
                         time.sleep(1.5) 
-                        atualizar_lcd("STATUS: OK", "Aguardando...")
+                        if not sistema_destravado:
+                            atualizar_lcd("STATUS: OK", "Aguardando...")
                 
                 elif tecla == '*': 
                     buffer_senha = ""
