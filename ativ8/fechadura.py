@@ -198,7 +198,7 @@ def main():
             print(distancia)
             
             if distancia > 0:
-                if abs(distancia - distancia_anterior) >= 1.0:
+                if abs(distancia - distancia_anterior) >= 30.0:
                     print(f"[SENSOR] Distancia medida: {distancia} cm")
                     distancia_anterior = distancia
                 
