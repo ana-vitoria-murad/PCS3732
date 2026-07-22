@@ -34,7 +34,7 @@ for col in COLUNAS:
 for lin in LINHAS:
     pi.set_mode(lin, pigpio.INPUT)
     pi.set_pull_up_down(lin, pigpio.PUD_UP)
-    pi.set_glitch_filter(lin, 50000) # Debounce nativo de 50ms
+    pi.set_glitch_filter(lin, 50000) 
 
 # Display LCD 
 I2C_BUS = 1
@@ -192,7 +192,9 @@ def main():
             
             distancia = ler_distancia()
             if distancia > 0:
-                estado_porta = "Fechada" if distancia <= LIMITE_PORTA_FECHADA_CM else "Aberta"
+                if distancia > LIMITE_PORTA_FECHADA_CM and not sistema_destravado:
+                atualizar_lcd("ALARME!", "Invasao detectada")
+                acionar_buzzer(2.0)
             
             tecla = ler_teclado()
             
