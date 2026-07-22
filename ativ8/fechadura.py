@@ -193,8 +193,8 @@ def main():
             distancia = ler_distancia()
             if distancia > 0:
                 if distancia > LIMITE_PORTA_FECHADA_CM and not sistema_destravado:
-                atualizar_lcd("ALARME!", "Invasao detectada")
-                acionar_buzzer(2.0)
+                    atualizar_lcd("ALARME!", "Invasao detectada")
+                    acionar_buzzer(2.0)
             
             tecla = ler_teclado()
             
